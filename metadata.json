@@ -1,5 +1,5 @@
 {
-  "name": "RealmForge",
-  "description": "A living RPG sandbox where AI agents with persistent memory and goals orchestrate a simulated world using Gemini 3.",
+  "name": "AutoWorld Empire",
+  "description": "A generative civilization simulator where autonomous AI agents build, govern, and evolve shareable worlds in real time.",
   "requestFramePermissions": []
 }

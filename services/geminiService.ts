@@ -1,411 +1,304 @@
-import { GoogleGenAI, FunctionDeclaration, Type, Schema, GenerateContentResponse } from "@google/genai";
-import { WorldState, NPC, WorldEvent, DecisionTrace, CustomTool } from '../types';
-import { executeScout, executeTrade, executeRumor, executeCombatOps } from './toolService';
-import { retrieveRelevantMemories } from './memoryService';
+import { GoogleGenAI, Type, Modality } from "@google/genai";
+import { WorldState, Faction, NPC, Location, Tile, DecisionTrace, WorldDiff, Commodity, ThemeConfig } from '../types';
+import { retrieveMemories } from './memoryService';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-const REASONING_MODEL = 'gemini-3-pro-preview'; 
-const IMAGE_MODEL = 'gemini-3-pro-image-preview';
-const SIMULATION_MODEL = 'gemini-3-pro-preview'; // Used to simulate dynamic tools
+const MODEL = 'gemini-3-pro-preview';
+const IMAGE_MODEL = 'gemini-2.5-flash-image';
+const TTS_MODEL = 'gemini-2.5-flash-preview-tts';
 
-// Static Tools
-const STATIC_TOOLS: FunctionDeclaration[] = [
-  {
-    name: 'deployScout',
-    description: 'Deploys a scout sub-agent to gather info.',
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        location: { type: Type.STRING, description: 'Location to scout (e.g., Forest, Market, Town Hall)' }
-      },
-      required: ['location']
-    }
-  },
-  {
-    name: 'manageEconomy',
-    description: 'Deploys a merchant sub-agent to influence the market.',
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        action: { type: Type.STRING, enum: ['BUY', 'SELL', 'HOARD'], description: 'Economic action to take' }
-      },
-      required: ['action']
-    }
-  },
-  {
-    name: 'spreadRumor',
-    description: 'Deploys a rumor sub-agent to influence public opinion.',
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        targetFaction: { type: Type.STRING, description: 'Faction to talk about' },
-        type: { type: Type.STRING, enum: ['SLANDER', 'PRAISE'], description: 'Type of rumor' }
-      },
-      required: ['targetFaction', 'type']
-    }
-  },
-  {
-    name: 'executeCombat',
-    description: 'Deploys a tactician sub-agent for combat or security.',
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        operation: { type: Type.STRING, enum: ['RAID', 'PATROL'], description: 'Combat operation type' }
-      },
-      required: ['operation']
-    }
-  },
-  {
-    name: 'inventTool',
-    description: 'Invents a NEW tool/capability that can be used by ANY agent in the future. Use this when existing tools are insufficient.',
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        name: { type: Type.STRING, description: 'Name of the tool (camelCase, e.g., performRitual)' },
-        description: { type: Type.STRING, description: 'Detailed description of what the tool does and its effect on the world.' },
-        parameterJsonSchema: { type: Type.STRING, description: 'Stringified JSON Schema for the tool parameters.' }
-      },
-      required: ['name', 'description', 'parameterJsonSchema']
+/**
+ * Procedural Map Generation (Hybrid Genesis)
+ * We generate the tiles procedurally to save tokens and ensure geometry,
+ * then ask Gemini to populate the "Content".
+ */
+const generateProceduralMap = (width: number, height: number): Tile[] => {
+  const tiles: Tile[] = [];
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let terrain: any = 'plains';
+      const noise = Math.sin(x * 0.2) + Math.cos(y * 0.2) + Math.random() * 0.5;
+      if (noise > 1.5) terrain = 'mountain';
+      else if (noise > 1.0) terrain = 'forest';
+      else if (noise < -0.5) terrain = 'water';
+      
+      tiles.push({ x, y, terrain, owner_faction_id: null, location_id: null });
     }
   }
-];
+  return tiles;
+};
 
-// Helper to simulate the effect of a dynamically invented tool
-async function simulateDynamicTool(
-  state: WorldState,
-  toolName: string,
-  toolDesc: string,
-  args: any,
-  agent: NPC
-): Promise<{ message: string; updates: any }> {
+export const runGenesisAgent = async (seed: string, theme: ThemeConfig): Promise<Partial<WorldState>> => {
+  const mapTiles = generateProceduralMap(24, 16);
   
   const prompt = `
-    You are the World Engine. An agent has invoked a custom tool.
+    GENESIS AGENT: Create a new world based on seed "${seed}".
     
-    TOOL NAME: ${toolName}
-    DESCRIPTION: ${toolDesc}
-    ARGS USED: ${JSON.stringify(args)}
-    
-    AGENT: ${agent.name} (${agent.role})
-    CURRENT STATE: 
-    - Grain: ${state.resources.grainStock}
-    - Price: ${state.resources.grainPrice}
-    - Security: ${state.resources.securityLevel}
-    - Unrest: ${state.resources.unrest}
-    
-    TASK:
-    Determine the outcome of this action.
-    Return a JSON object with:
-    1. "message": A text description of what happened.
-    2. "updates": A partial JSON object of the WorldState (resources, etc) that changed.
-    
-    Be creative but realistic.
+    USER SETTINGS (Customize names, roles, and descriptions based on this):
+    - GENRE: ${theme.genre}
+    - MAJOR THREAT: ${theme.threat}
+    - TONE: ${theme.tone}
+
+    You need to generate:
+    1. 3 Factions (Order, Commerce, Chaos) - Names must match the GENRE.
+    2. 2-3 Locations (Town, Outpost) - specify coordinates x (0-23), y (0-15).
+    3. 6 NPCs (Leader, Merchant, Guard, etc) assigned to factions/locations.
+    4. 1 Commodity (e.g. Grain, Microchips, Mana) config matching the GENRE.
+    5. 1 Initial Event Log entry setting the scene.
+
+    Output strict JSON compatible with the Schema.
   `;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: SIMULATION_MODEL,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            message: { type: Type.STRING },
-            updates: { 
-              type: Type.OBJECT,
-              properties: {
+  const response = await ai.models.generateContent({
+    model: MODEL,
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          factions: { 
+            type: Type.ARRAY, 
+            items: { 
+              type: Type.OBJECT, 
+              properties: { 
+                id: {type: Type.STRING}, 
+                name: {type: Type.STRING}, 
+                archetype: {type: Type.STRING}, 
+                ideology: {type: Type.STRING}, 
                 resources: {
-                   type: Type.OBJECT,
-                   properties: {
-                     grainPrice: { type: Type.NUMBER },
-                     grainStock: { type: Type.NUMBER },
-                     securityLevel: { type: Type.NUMBER },
-                     unrest: { type: Type.NUMBER }
-                   }
+                  type: Type.OBJECT, 
+                  properties: {gold: {type: Type.NUMBER}, grain: {type: Type.NUMBER}, iron: {type: Type.NUMBER}}
+                },
+                military: {
+                  type: Type.OBJECT,
+                  properties: {troops: {type: Type.NUMBER}, quality: {type: Type.NUMBER}}
                 }
-              }
-            }
-          }
-        }
-      }
-    });
-    
-    const result = JSON.parse(response.text || "{}");
-    return {
-      message: result.message || `Executed ${toolName}.`,
-      updates: result.updates || {}
-    };
-  } catch (e) {
-    console.error("Dynamic tool simulation failed", e);
-    return { message: `Attempted ${toolName} but failed.`, updates: {} };
-  }
-}
-
-// Helper to generate narrative and visuals
-async function generateNarrativeAndVisuals(
-  npc: NPC, 
-  actionDescription: string, 
-  resultMessage: string, 
-  imageSize: '1K' | '2K' | '4K'
-): Promise<{ narrative: string; imageUrl?: string }> {
-  
-  const narrativePrompt = `
-    Context: Fantasy RPG World.
-    Character: ${npc.name} (${npc.role}, ${npc.faction}).
-    Appearance: ${npc.appearance}.
-    Action Taken: ${actionDescription}.
-    Result: ${resultMessage}.
-    
-    Task 1: Write a short, dramatic narrative paragraph (max 3 sentences) describing this scene in the past tense.
-    Task 2: Write a detailed image generation prompt for this scene.
-    
-    Return JSON: { "narrative": string, "imagePrompt": string }
-  `;
-
-  let narrativeText = resultMessage;
-  let imageUrl: string | undefined;
-
-  try {
-    const narrativeResponse = await ai.models.generateContent({
-      model: REASONING_MODEL,
-      contents: narrativePrompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            narrative: { type: Type.STRING },
-            imagePrompt: { type: Type.STRING }
-          }
-        }
-      }
-    });
-
-    const json = JSON.parse(narrativeResponse.text || "{}");
-    narrativeText = json.narrative || resultMessage;
-    const imagePrompt = json.imagePrompt;
-
-    if (imagePrompt) {
-      const imageResponse = await ai.models.generateContent({
-        model: IMAGE_MODEL,
-        contents: { parts: [{ text: imagePrompt }] },
-        config: {
-          imageConfig: {
-            aspectRatio: "16:9",
-            imageSize: imageSize
-          }
-        }
-      });
-
-      for (const part of imageResponse.candidates?.[0]?.content?.parts || []) {
-        if (part.inlineData) {
-          imageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-          break;
+              } 
+            } 
+          },
+          locations: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { id: {type: Type.STRING}, name: {type: Type.STRING}, type: {type: Type.STRING}, x: {type: Type.NUMBER}, y: {type: Type.NUMBER}, defense: {type: Type.NUMBER}, prosperity: {type: Type.NUMBER}, unrest: {type: Type.NUMBER} } } },
+          npcs: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { id: {type: Type.STRING}, name: {type: Type.STRING}, role: {type: Type.STRING}, faction_id: {type: Type.STRING}, goals: {type: Type.ARRAY, items: {type: Type.OBJECT, properties: {id: {type: Type.STRING}, text: {type: Type.STRING}, priority: {type: Type.NUMBER}}}}, location_id: {type: Type.STRING} } } },
+          commodities: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { id: {type: Type.STRING}, base_price: {type: Type.NUMBER}, current_price: {type: Type.NUMBER}, supply: {type: Type.NUMBER}, demand: {type: Type.NUMBER}, volatility: {type: Type.NUMBER} } } },
+          initial_event: { type: Type.STRING }
         }
       }
     }
+  });
 
-  } catch (e) {
-    console.warn("Failed to generate narrative/image", e);
-  }
+  const data = JSON.parse(response.text || "{}");
+  
+  // Hydrate the procedural map with generated locations
+  const finalTiles = mapTiles.map(t => {
+    const loc = data.locations?.find((l: any) => l.x === t.x && l.y === t.y);
+    if (loc) return { ...t, location_id: loc.id, owner_faction_id: loc.faction_id };
+    return t;
+  });
 
-  return { narrative: narrativeText, imageUrl };
-}
+  return {
+    map: { width: 24, height: 16, tiles: finalTiles, locations: data.locations || [], routes: [] },
+    // Ensure military and other properties exist even if AI omitted them
+    factions: (data.factions || []).map((f: any) => ({
+      ...f,
+      military: f.military || { troops: 50, quality: 1.0 },
+      relationships: f.relationships || [],
+      laws: f.laws || []
+    })),
+    npcs: (data.npcs || []).map((n: any) => ({ ...n, memory: [], relationships: [], traits: [], status: 'idle', resources: { gold: 50, influence: 10 } })),
+    economy: { commodities: data.commodities || [], market_events: [] },
+    event_log: [{ 
+      id: 'evt_genesis', epoch: 0, type: 'genesis', title: 'World Created', 
+      summary: data.initial_event || 'The world begins.', 
+      impact: {}, decision_trace_id: null 
+    }]
+  };
+};
 
-export const runAgentTurn = async (
-  npc: NPC,
-  currentState: WorldState,
-  imageSize: '1K' | '2K' | '4K'
-): Promise<{ event: WorldEvent; updates: Partial<WorldState> | null; newMemories: { npcId: string; memory: string }[]; newTool?: CustomTool }> => {
+/**
+ * Manager Agent: Plans high-level actions and spawns Sub-Agents (via Tool Calls).
+ */
+export const runManagerAgent = async (
+  manager: NPC,
+  state: WorldState,
+  theme?: ThemeConfig
+): Promise<{ toolCalls: any[], trace: DecisionTrace }> => {
+  const memories = retrieveMemories(manager, "current threats opportunities goal");
+  const faction = state.factions.find(f => f.id === manager.faction_id);
   
-  // 1. Context Construction
-  const memories = retrieveRelevantMemories(npc, `current situation grain bandits town`);
-  
-  // Combine Static Tools with Dynamically Invented Tools
-  const dynamicTools: FunctionDeclaration[] = currentState.customTools.map(t => ({
-    name: t.name,
-    description: t.description,
-    parameters: t.parameters
-  }));
-  
-  const ALL_TOOLS = [...STATIC_TOOLS, ...dynamicTools];
+  const themeContext = theme ? `CONTEXT: The world genre is ${theme.genre} (${theme.tone}). Threats: ${theme.threat}. Act accordingly.` : '';
 
   const prompt = `
-    You are ${npc.name}, the ${npc.role} of the ${npc.faction}.
-    Appearance: ${npc.appearance}
+    You are ${manager.name}, the ${manager.role} of ${faction?.name}.
+    ${themeContext}
+    Goals: ${manager.goals.map(g => g.text).join(', ')}.
+    Memories: ${memories.map(m => m.text).join('; ')}.
+    Resources: Gold ${faction?.resources.gold}, Grain ${faction?.resources.grain}.
     
-    YOUR GOALS: ${npc.goals.join(', ')}.
-    YOUR RELATIONSHIPS: ${JSON.stringify(npc.relationships)}.
+    Situation: Day ${state.time.day}. Unrest is ${state.map.locations.find(l => l.id === manager.location_id)?.unrest || 0}.
     
-    WORLD STATE:
-    - Grain Price: ${currentState.resources.grainPrice}
-    - Security: ${currentState.resources.securityLevel}
-    - Unrest: ${currentState.resources.unrest}
-    - Day: ${currentState.day}
-    - AVAILABLE TOOLS: ${ALL_TOOLS.map(t => t.name).join(', ')}
+    Task: Decide on a strategic move. Spawn a sub-agent to execute it.
+    Available Tools (Sub-Agents):
+    - build_structure (BuilderAgent): Construct buildings.
+    - simulate_combat (TacticianAgent): Attack or Defend.
+    - simulate_economy (MerchantAgent): Trade.
     
-    RECENT MEMORIES:
-    ${memories.join('\n')}
-    
-    TASK:
-    Analyze the situation carefully using Thinking Mode.
-    Decide on a SINGLE strategic move.
-    
-    Options:
-    1. Use an existing tool (Scout, Trade, Combat, etc).
-    2. INVENT A NEW TOOL if you need a specific capability not listed (e.g., assassinate, bribe, magical_ritual, fortify).
-    3. Use a previously invented tool if relevant.
-    
-    If you invent a tool, provide a generic schema so others can use it too.
+    Output a decision with reasoning and a tool call.
   `;
+
+  const TOOLS = [
+    {
+      name: 'build_structure',
+      description: 'Spawn BuilderAgent to construct a building.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          location_id: { type: Type.STRING },
+          building_type: { type: Type.STRING, enum: ['market', 'farm', 'barracks', 'wall'] },
+          cost_gold: { type: Type.NUMBER },
+          cost_grain: { type: Type.NUMBER }
+        },
+        required: ['location_id', 'building_type', 'cost_gold', 'cost_grain']
+      }
+    },
+    {
+      name: 'simulate_combat',
+      description: 'Spawn TacticianAgent to manage combat.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          target_faction_id: { type: Type.STRING },
+          location_id: { type: Type.STRING }
+        },
+        required: ['target_faction_id', 'location_id']
+      }
+    }
+  ];
+
+  const response = await ai.models.generateContent({
+    model: MODEL,
+    contents: prompt,
+    config: {
+      tools: [{ functionDeclarations: TOOLS }],
+      thinkingConfig: { thinkingBudget: 4000 }
+    }
+  });
+
+  const cand = response.candidates?.[0];
+  const fc = cand?.content?.parts?.find(p => p.functionCall);
+  const reasoning = cand?.content?.parts?.find(p => p.text)?.text || "Executing routine duties.";
+
+  const trace: DecisionTrace = {
+    decision_trace_id: `trace_${Date.now()}`,
+    epoch: state.time.epoch,
+    actor: manager.name,
+    goal_summary: manager.goals.map(g => g.text),
+    retrieved_memories: memories,
+    world_facts_used: [`Day ${state.time.day}`],
+    plan_candidates: [{ plan: "Action", pros: [], cons: [] }],
+    chosen_plan: fc ? fc.functionCall.name : "Wait",
+    tool_calls: fc ? [{ tool: fc.functionCall.name, inputs: fc.functionCall.args, outputs: null }] : [],
+    world_diff_summary: [],
+    confidence: 0.8
+  };
+
+  return {
+    toolCalls: fc ? [fc.functionCall] : [],
+    trace
+  };
+};
+
+export const runHistoryAgent = async (logs: string[]): Promise<string> => {
+  const prompt = `
+    History Agent: Summarize these events into a single punchy log entry title and summary.
+    Events: ${logs.join('; ')}
+  `;
+  const response = await ai.models.generateContent({
+    model: MODEL,
+    contents: prompt
+  });
+  return response.text || "Daily events concluded.";
+};
+
+export const generateCharacterPortrait = async (npc: NPC, factionName: string, theme?: ThemeConfig): Promise<string | null> => {
+  const genre = theme?.genre || 'Fantasy';
+  const tone = theme?.tone || 'Detailed';
+  const prompt = `A character portrait of ${npc.name}, a ${npc.role} belonging to the ${factionName} faction. 
+  Setting: ${genre}, ${tone}. High quality, detailed digital art, close-up face shot.`;
 
   try {
     const response = await ai.models.generateContent({
-      model: REASONING_MODEL,
-      contents: prompt,
+      model: IMAGE_MODEL,
+      contents: {
+        parts: [{ text: prompt }]
+      },
       config: {
-        tools: [{ functionDeclarations: ALL_TOOLS }],
-        thinkingConfig: { thinkingBudget: 32768 }
+        imageConfig: { aspectRatio: "1:1" }
       }
     });
 
-    const candidate = response.candidates?.[0];
-    const fc = candidate?.content?.parts?.find(p => p.functionCall);
-    const reasoningText = candidate?.content?.parts?.find(p => p.text)?.text || "Deep thought process engaged...";
-
-    const trace: DecisionTrace = {
-      agentName: npc.name,
-      goal: npc.goals[0],
-      retrievedMemories: memories,
-      reasoning: reasoningText,
-      toolUsed: 'None',
-      toolInput: {},
-      toolOutput: {},
-      stateDiff: 'No Action',
-      isThinking: true
-    };
-
-    if (fc && fc.functionCall) {
-      const name = fc.functionCall.name;
-      const args = fc.functionCall.args as any;
-
-      trace.toolUsed = name;
-      trace.toolInput = args;
-
-      // Special Handling for InventTool
-      if (name === 'inventTool') {
-         const newTool: CustomTool = {
-           name: args.name,
-           description: args.description,
-           parameters: JSON.parse(args.parameterJsonSchema || "{}"),
-           creatorId: npc.id,
-           createdTick: currentState.tick
-         };
-         
-         trace.toolOutput = { success: true, message: `Invented new tool: ${args.name}` };
-         trace.stateDiff = "New capability added to global registry.";
-         
-         const { narrative, imageUrl } = await generateNarrativeAndVisuals(npc, `invented a new technique: ${args.name}`, `The world now allows: ${args.description}`, imageSize);
-
-         return {
-           event: {
-             id: crypto.randomUUID(),
-             tick: currentState.tick,
-             type: 'TOOL_INVENTION',
-             description: `${npc.name} invented a new tool: ${args.name}`,
-             narrative,
-             imageUrl,
-             sourceId: npc.id,
-             trace,
-             impact: 'New Capability Available'
-           },
-           updates: null,
-           newMemories: [{ npcId: npc.id, memory: `I invented the ${args.name} technique on day ${currentState.day}.` }],
-           newTool: newTool
-         };
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return `data:image/png;base64,${part.inlineData.data}`;
       }
-
-      // Execution Logic
-      let result;
-      // Check if it's a static tool
-      if (['deployScout', 'manageEconomy', 'spreadRumor', 'executeCombat'].includes(name)) {
-        switch (name) {
-          case 'deployScout': result = executeScout(currentState, npc.id, args.location); break;
-          case 'manageEconomy': result = executeTrade(currentState, npc.id, args.action); break;
-          case 'spreadRumor': result = executeRumor(currentState, npc.id, args.targetFaction, args.type); break;
-          case 'executeCombat': result = executeCombatOps(currentState, npc.id, args.operation); break;
-        }
-      } else {
-        // It's a Dynamic Tool!
-        const toolDef = currentState.customTools.find(t => t.name === name);
-        if (toolDef) {
-           const simResult = await simulateDynamicTool(currentState, name, toolDef.description, args, npc);
-           result = {
-             success: true,
-             message: simResult.message,
-             updates: simResult.updates,
-             newMemories: [{ npcId: npc.id, memory: `Used custom tool ${name}. Result: ${simResult.message}` }]
-           };
-        } else {
-           throw new Error(`Tool ${name} not found in static or dynamic registry.`);
-        }
-      }
-
-      if (!result) throw new Error("Result undefined");
-
-      trace.toolOutput = { success: result.success, message: result.message };
-      trace.stateDiff = JSON.stringify(result.updates || {});
-
-      const { narrative, imageUrl } = await generateNarrativeAndVisuals(npc, trace.reasoning, result.message, imageSize);
-
-      return {
-        event: {
-          id: crypto.randomUUID(),
-          tick: currentState.tick,
-          type: 'AGENT_ACTION',
-          description: result.message,
-          narrative: narrative,
-          imageUrl: imageUrl,
-          sourceId: npc.id,
-          trace: trace,
-          impact: result.updates ? 'World State Changed' : 'Information Gathered'
-        },
-        updates: result.updates,
-        newMemories: result.newMemories || []
-      };
-
-    } else {
-      // Fallback
-      const { narrative, imageUrl } = await generateNarrativeAndVisuals(npc, "Contemplation", `${npc.name} thought deeply but took no action.`, imageSize);
-
-      return {
-        event: {
-          id: crypto.randomUUID(),
-          tick: currentState.tick,
-          type: 'AGENT_ACTION',
-          description: `${npc.name} deliberated but took no direct action.`,
-          narrative: narrative,
-          imageUrl: imageUrl,
-          sourceId: npc.id,
-          trace: { ...trace, reasoning: response.text || "Thinking..." }
-        },
-        updates: null,
-        newMemories: []
-      };
     }
-  } catch (error) {
-    console.error("Gemini Agent Error:", error);
-    return {
-      event: {
-        id: crypto.randomUUID(),
-        tick: currentState.tick,
-        type: 'AGENT_ACTION',
-        description: `${npc.name} failed to formulate a plan.`,
-        sourceId: npc.id
+    return null;
+  } catch (e) {
+    console.error("Image generation failed", e);
+    return null;
+  }
+};
+
+export const interactWithNPC = async (
+  npc: NPC, 
+  factionName: string, 
+  history: {role: string, text: string}[], 
+  userMessage: string
+): Promise<string> => {
+  const memories = retrieveMemories(npc, userMessage, 2);
+  const prompt = `
+    You are ${npc.name}, a ${npc.role} in the ${factionName} faction.
+    Your goals: ${npc.goals.map(g => g.text).join(', ')}.
+    Relevant memories: ${memories.map(m => m.text).join('; ')}.
+    
+    A traveler (the user) approaches you.
+    Respond to them in character. Be concise (max 2 sentences).
+  `;
+
+  // Construct chat history
+  const chatHistory = history.map(h => ({
+    role: h.role === 'user' ? 'user' : 'model',
+    parts: [{ text: h.text }]
+  }));
+
+  const chat = ai.chats.create({
+    model: MODEL,
+    config: { systemInstruction: prompt },
+    history: chatHistory
+  });
+
+  const result = await chat.sendMessage({ message: userMessage });
+  return result.text || "...";
+};
+
+export const generateSpeech = async (text: string, voiceName: string = 'Kore'): Promise<string | null> => {
+  try {
+    const response = await ai.models.generateContent({
+      model: TTS_MODEL,
+      contents: [{ parts: [{ text }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName },
+          },
+        },
       },
-      updates: null,
-      newMemories: []
-    };
+    });
+
+    const base64 = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    return base64 || null;
+  } catch (e) {
+    console.error("TTS generation failed", e);
+    return null;
   }
 };
