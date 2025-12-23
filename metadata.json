@@ -1,0 +1,5 @@
+{
+  "name": "RealmForge",
+  "description": "A living RPG sandbox where AI agents with persistent memory and goals orchestrate a simulated world using Gemini 3.",
+  "requestFramePermissions": []
+}
