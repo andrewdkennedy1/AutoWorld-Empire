@@ -125,3 +125,78 @@ export const generateWorldDiff = (prev: WorldState, curr: WorldState, epoch: num
     diff: { added, updated, removed }
   };
 };
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+export const applyInfluence = (
+  state: WorldState,
+  inputs: { target_type: 'faction' | 'location' | 'npc'; target_id: string; field: string; delta: number }
+): { success: boolean; message: string; updates: Partial<WorldState> | null } => {
+  const targetType = inputs.target_type;
+  const targetId = inputs.target_id;
+  const delta = clamp(inputs.delta, -50, 50);
+
+  if (!targetId) return { success: false, message: 'Missing target_id', updates: null };
+
+  if (targetType === 'faction') {
+    const factionIndex = state.factions.findIndex(f => f.id === targetId);
+    if (factionIndex === -1) return { success: false, message: 'Faction not found', updates: null };
+    const faction = state.factions[factionIndex];
+    const updated = { ...faction };
+    if (inputs.field === 'resources.gold') updated.resources = { ...updated.resources, gold: Math.max(0, updated.resources.gold + delta) };
+    if (inputs.field === 'resources.grain') updated.resources = { ...updated.resources, grain: Math.max(0, updated.resources.grain + delta) };
+    if (inputs.field === 'resources.iron') updated.resources = { ...updated.resources, iron: Math.max(0, updated.resources.iron + delta) };
+    if (inputs.field === 'military.troops') updated.military = { ...updated.military, troops: Math.max(0, updated.military.troops + delta) };
+    if (inputs.field === 'military.quality') updated.military = { ...updated.military, quality: clamp(updated.military.quality + delta * 0.02, 0.2, 3) };
+
+    const newFactions = [...state.factions];
+    newFactions[factionIndex] = updated;
+    return {
+      success: true,
+      message: `${faction.name} shifted`,
+      updates: { factions: newFactions }
+    };
+  }
+
+  if (targetType === 'location') {
+    const locationIndex = state.map.locations.findIndex(l => l.id === targetId);
+    if (locationIndex === -1) return { success: false, message: 'Location not found', updates: null };
+    const location = state.map.locations[locationIndex];
+    const updated = { ...location };
+    const prosperity = Number(updated.prosperity || 0);
+    const defense = Number(updated.defense || 0);
+    const unrest = Number(updated.unrest || 0);
+    const population = Number(updated.population || 0);
+    if (inputs.field === 'prosperity') updated.prosperity = clamp(prosperity + delta, 0, 100);
+    if (inputs.field === 'defense') updated.defense = clamp(defense + delta, 0, 100);
+    if (inputs.field === 'unrest') updated.unrest = clamp(unrest + delta, 0, 100);
+    if (inputs.field === 'population') updated.population = Math.max(0, population + delta);
+
+    const newLocations = [...state.map.locations];
+    newLocations[locationIndex] = updated;
+    return {
+      success: true,
+      message: `${location.name} shifted`,
+      updates: { map: { ...state.map, locations: newLocations } }
+    };
+  }
+
+  if (targetType === 'npc') {
+    const npcIndex = state.npcs.findIndex(n => n.id === targetId);
+    if (npcIndex === -1) return { success: false, message: 'NPC not found', updates: null };
+    const npc = state.npcs[npcIndex];
+    const updated = { ...npc };
+    if (inputs.field === 'resources.gold') updated.resources = { ...updated.resources, gold: Math.max(0, updated.resources.gold + delta) };
+    if (inputs.field === 'resources.influence') updated.resources = { ...updated.resources, influence: Math.max(0, updated.resources.influence + delta) };
+
+    const newNpcs = [...state.npcs];
+    newNpcs[npcIndex] = updated;
+    return {
+      success: true,
+      message: `${npc.name} shifted`,
+      updates: { npcs: newNpcs }
+    };
+  }
+
+  return { success: false, message: 'Unsupported target', updates: null };
+};

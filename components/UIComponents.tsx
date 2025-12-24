@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { WorldState, Tile, DecisionTrace, ThemeConfig, NPC, Faction, Location } from '../types';
 import { TERRAIN_COLORS } from '../constants';
-import { generateCharacterPortrait, interactWithNPC, generateSpeech } from '../services/geminiService';
+import { generateCharacterPortrait, interactWithNPC, generateSpeech } from '../services/aiService';
 import { addMemoryToNPC } from '../services/memoryService';
+import { PROVIDER_OPTIONS } from '../services/aiSettings';
+import type { ProviderId } from '../services/aiSettings';
 
 // Audio decoding helpers
 function decode(base64: string) {
@@ -393,6 +395,100 @@ export const SetupModal = ({ onConfirm, onCancel }: any) => {
             >
               Forge Empire
             </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export const ApiKeyModal = ({ onSave, onCancel, errorMessage, initialProvider, initialBaseUrl, initialModel }: any) => {
+  const [providerId, setProviderId] = useState<ProviderId>(initialProvider || 'gemini');
+  const [baseUrl, setBaseUrl] = useState(initialBaseUrl || '');
+  const [model, setModel] = useState(initialModel || '');
+  const [apiKey, setApiKey] = useState('');
+
+  const providerOption = PROVIDER_OPTIONS.find(option => option.id === providerId) || PROVIDER_OPTIONS[0];
+  const missingBaseUrl = providerId !== 'gemini' && !baseUrl.trim();
+  const missingModel = providerId !== 'gemini' && !model.trim();
+  const disableSave = (providerOption.requiresKey && !apiKey.trim()) || missingBaseUrl || missingModel;
+
+  useEffect(() => {
+    setBaseUrl(providerOption.defaultBaseUrl);
+    setModel(providerOption.defaultModel);
+  }, [providerId, providerOption.defaultBaseUrl, providerOption.defaultModel]);
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[120] p-4 backdrop-blur-md animate-in fade-in duration-300">
+      <div className="bg-realm-panel border border-realm-accent/40 rounded-3xl p-8 max-w-lg w-full shadow-[0_0_80px_rgba(0,0,0,0.9)] relative">
+        <h2 className="text-3xl font-bold text-white mb-2">AI Settings</h2>
+        <p className="text-realm-muted text-sm mb-6">
+          Configure your provider, model, and API key to enable world generation and agent actions. Settings are stored locally in your browser.
+        </p>
+        {errorMessage && (
+          <div className="mb-4 rounded-xl border border-realm-danger/40 bg-realm-danger/10 px-4 py-3 text-xs text-realm-danger font-mono">
+            {errorMessage}
+          </div>
+        )}
+        <div className="mb-4">
+          <label className="block text-[10px] font-bold text-realm-accent uppercase tracking-[0.3em] mb-2">Provider</label>
+          <select
+            value={providerId}
+            onChange={(e) => setProviderId(e.target.value as ProviderId)}
+            className="w-full bg-black/40 border border-gray-700 text-white px-4 py-3 rounded-xl focus:border-realm-accent focus:ring-1 focus:ring-realm-accent/20 focus:outline-none transition-all"
+          >
+            {PROVIDER_OPTIONS.map(option => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+          </select>
+        </div>
+        {providerId !== 'gemini' && (
+          <div className="mb-4">
+            <label className="block text-[10px] font-bold text-realm-accent uppercase tracking-[0.3em] mb-2">Base URL</label>
+            <input
+              type="text"
+              value={baseUrl}
+              onChange={(e) => {
+                setBaseUrl(e.target.value);
+              }}
+              placeholder="https://api.example.com/v1"
+              className="w-full bg-black/40 border border-gray-700 text-white px-5 py-3 rounded-xl focus:border-realm-accent focus:ring-1 focus:ring-realm-accent/20 focus:outline-none transition-all placeholder:text-gray-600 shadow-inner"
+            />
+          </div>
+        )}
+        {providerId !== 'gemini' && (
+          <div className="mb-4">
+            <label className="block text-[10px] font-bold text-realm-accent uppercase tracking-[0.3em] mb-2">Model</label>
+            <input
+              type="text"
+              value={model}
+              onChange={(e) => {
+                setModel(e.target.value);
+              }}
+              placeholder="Model name"
+              className="w-full bg-black/40 border border-gray-700 text-white px-5 py-3 rounded-xl focus:border-realm-accent focus:ring-1 focus:ring-realm-accent/20 focus:outline-none transition-all placeholder:text-gray-600 shadow-inner"
+            />
+          </div>
+        )}
+        <input
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder={providerOption.requiresKey ? "Paste API key..." : "Optional API key..."}
+          className="w-full bg-black/40 border border-gray-700 text-white px-5 py-3 rounded-xl focus:border-realm-accent focus:ring-1 focus:ring-realm-accent/20 focus:outline-none transition-all placeholder:text-gray-600 shadow-inner mb-6"
+        />
+        <div className="flex items-center justify-between pt-4 border-t border-gray-800">
+          {onCancel && (
+            <button onClick={onCancel} className="text-realm-muted hover:text-white transition-colors text-sm uppercase tracking-widest font-bold">
+              Not Now
+            </button>
+          )}
+          <Button
+            onClick={() => onSave({ providerId, apiKey, baseUrl, model })}
+            disabled={disableSave}
+            className="px-8 py-3 text-sm"
+          >
+            Save Settings
+          </Button>
         </div>
       </div>
     </div>
