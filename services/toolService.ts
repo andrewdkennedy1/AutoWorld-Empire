@@ -75,7 +75,7 @@ export const buildStructure = (
   const newLocations = [...state.map.locations];
   newLocations[locationIndex] = {
     ...location,
-    buildings: [...location.buildings, newBuilding],
+    buildings: [...(location.buildings || []), newBuilding],
     prosperity: location.prosperity + 5
   };
 
@@ -103,7 +103,11 @@ export const generateWorldDiff = (prev: WorldState, curr: WorldState, epoch: num
     if (!pLoc) added.push(`Location ${loc.name} founded`);
     else {
       if (pLoc.faction_id !== loc.faction_id) updated.push(`${loc.name} captured by new faction`);
-      if (pLoc.buildings.length !== loc.buildings.length) updated.push(`New building in ${loc.name}`);
+      
+      const prevBuildings = pLoc.buildings || [];
+      const currBuildings = loc.buildings || [];
+      
+      if (prevBuildings.length !== currBuildings.length) updated.push(`New building in ${loc.name}`);
     }
   });
 

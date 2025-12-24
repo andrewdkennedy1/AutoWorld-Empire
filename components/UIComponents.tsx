@@ -21,7 +21,6 @@ function decodePCM(
   sampleRate: number = 24000,
   numChannels: number = 1,
 ): AudioBuffer {
-  // PCM data from Gemini is int16 (2 bytes per sample), little endian
   const dataInt16 = new Int16Array(data.buffer);
   const frameCount = dataInt16.length / numChannels;
   const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
@@ -29,7 +28,6 @@ function decodePCM(
   for (let channel = 0; channel < numChannels; channel++) {
     const channelData = buffer.getChannelData(channel);
     for (let i = 0; i < frameCount; i++) {
-      // Normalize Int16 to Float32 [-1.0, 1.0]
       channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
     }
   }
@@ -37,9 +35,9 @@ function decodePCM(
 }
 
 export const Button = ({ onClick, children, disabled = false, variant = 'primary', className='' }: any) => {
-  const base = "px-4 py-2 rounded font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed";
+  const base = "px-4 py-2 rounded font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed transform active:scale-95";
   const variants: any = {
-    primary: "bg-blue-600 text-white hover:bg-blue-500",
+    primary: "bg-blue-600 text-white hover:bg-blue-500 shadow-[0_0_15px_rgba(37,99,235,0.3)]",
     secondary: "bg-gray-700 text-gray-200 hover:bg-gray-600 border border-gray-600",
     danger: "bg-red-900/50 text-red-200 hover:bg-red-800/50 border border-red-800",
     ghost: "bg-transparent text-gray-300 hover:text-white hover:bg-white/5 border border-transparent"
@@ -47,10 +45,38 @@ export const Button = ({ onClick, children, disabled = false, variant = 'primary
   return <button onClick={onClick} disabled={disabled} className={`${base} ${variants[variant]} ${className}`}>{children}</button>;
 };
 
-export const Card = ({ children, title, className = '' }: any) => (
-  <div className={`bg-gray-800/80 border border-gray-700 rounded-lg p-4 shadow-xl ${className}`}>
-    {title && <h3 className="text-blue-400 font-bold mb-3 uppercase tracking-wider text-xs">{title}</h3>}
+export const Card = ({ children, title, className = '', headerAction }: any) => (
+  <div className={`bg-realm-panel/80 backdrop-blur-md border border-gray-700 rounded-xl p-5 shadow-2xl transition-all duration-300 ${className}`}>
+    {title && (
+      <div className="flex justify-between items-center mb-4 border-b border-gray-700/50 pb-2">
+        <h3 className="text-realm-accent font-bold uppercase tracking-[0.2em] text-[10px]">{title}</h3>
+        {headerAction}
+      </div>
+    )}
     {children}
+  </div>
+);
+
+const CloudOverlay = () => (
+  <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-30 mix-blend-screen">
+    <div className="cloud-layer animate-drift-slow"></div>
+    <div className="cloud-layer animate-drift-fast opacity-50"></div>
+    <style>{`
+      .cloud-layer {
+        position: absolute;
+        width: 400%;
+        height: 100%;
+        background: radial-gradient(circle at 20% 30%, rgba(255,255,255,0.2) 0%, transparent 40%),
+                    radial-gradient(circle at 70% 60%, rgba(255,255,255,0.2) 0%, transparent 35%);
+        filter: blur(40px);
+      }
+      @keyframes drift {
+        0% { transform: translateX(-50%); }
+        100% { transform: translateX(0%); }
+      }
+      .animate-drift-slow { animation: drift 120s linear infinite; }
+      .animate-drift-fast { animation: drift 80s linear infinite reverse; }
+    `}</style>
   </div>
 );
 
@@ -63,492 +89,251 @@ export const WorldMap = ({
   factions: any[],
   onTileClick: (tile: Tile) => void
 }) => {
-  if (!map || !map.tiles) return <div>Loading Map...</div>;
+  if (!map || !map.tiles) return <div className="animate-pulse text-gray-500">Scanning World...</div>;
   
   return (
-    <div 
-      className="grid gap-px bg-gray-900 border border-gray-700 p-1 overflow-hidden shadow-inner"
-      style={{ 
-        gridTemplateColumns: `repeat(${map.width}, minmax(0, 1fr))`,
-        aspectRatio: `${map.width}/${map.height}`
-      }}
-    >
-      {map.tiles.map((tile: Tile) => {
-        const location = map.locations?.find(l => l.id === tile.location_id);
-        const faction = factions?.find(f => f.id === tile.owner_faction_id);
-        
-        return (
-          <div 
-            key={`${tile.x}-${tile.y}`}
-            onClick={() => onTileClick(tile)}
-            className="relative w-full h-full group cursor-pointer hover:brightness-125 transition-all duration-100"
-            style={{ backgroundColor: TERRAIN_COLORS[tile.terrain] }}
-            title={`(${tile.x},${tile.y}) ${tile.terrain}`}
-          >
-            {/* Faction Overlay */}
-            {faction && (
-              <div className="absolute inset-0 opacity-20 bg-purple-500" />
-            )}
-            
-            {/* Location Marker */}
-            {location && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                 <span className="text-xs font-bold text-white drop-shadow-md transform group-hover:scale-125 transition-transform">
-                   {location.type === 'town' ? '🏰' : '⛺'}
-                 </span>
-              </div>
-            )}
-            
-            {/* Hover Tooltip */}
-            <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 z-10 bg-black/90 text-white text-[10px] p-1 rounded whitespace-nowrap pointer-events-none border border-gray-600 shadow-lg">
-              {location ? `${location.name} (${location.type})` : tile.terrain}
+    <div className="relative group rounded-lg overflow-hidden border border-gray-800 shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+      <div 
+        className="grid gap-px bg-gray-950 p-1 shadow-inner relative z-0"
+        style={{ 
+          gridTemplateColumns: `repeat(${map.width}, minmax(0, 1fr))`,
+          aspectRatio: `${map.width}/${map.height}`
+        }}
+      >
+        {map.tiles.map((tile: Tile) => {
+          const location = map.locations?.find(l => l.id === tile.location_id);
+          const faction = factions?.find(f => f.id === tile.owner_faction_id);
+          
+          return (
+            <div 
+              key={`${tile.x}-${tile.y}`}
+              onClick={() => onTileClick(tile)}
+              className="relative w-full h-full group cursor-pointer hover:z-10 transition-all duration-200"
+              style={{ backgroundColor: TERRAIN_COLORS[tile.terrain] }}
+            >
+              {tile.terrain === 'water' && <div className="absolute inset-0 animate-pulse opacity-20 bg-white/20 blur-[1px]"></div>}
+              {tile.terrain === 'mountain' && <div className="absolute inset-0 bg-gradient-to-tr from-black/20 to-transparent"></div>}
+              {faction && <div className="absolute inset-0 opacity-20 bg-realm-accent" />}
+              {location && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                   <div className={`text-sm transform group-hover:scale-150 transition-transform duration-300 drop-shadow-[0_0_8px_rgba(255,255,255,0.5)] ${location.unrest > 50 ? 'animate-bounce' : 'animate-pulse'}`}>
+                     {location.type === 'town' ? '🏰' : '⛺'}
+                   </div>
+                </div>
+              )}
+              <div className="absolute inset-0 opacity-0 group-hover:opacity-100 border border-white/40 z-20 transition-opacity"></div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+      <CloudOverlay />
     </div>
   );
 };
 
-export const TileInspector = ({ 
-  tile, 
-  worldState, 
-  onClose, 
-  onSelectNPC 
-}: { 
-  tile: Tile, 
-  worldState: WorldState, 
-  onClose: () => void,
-  onSelectNPC: (npc: NPC) => void
-}) => {
-  const location = worldState.map.locations?.find(l => l.id === tile.location_id);
-  const faction = worldState.factions?.find(f => f.id === tile.owner_faction_id);
-  const npcsHere = (worldState.npcs || []).filter(n => n.location_id === location?.id);
-
+export const TileInspector = ({ tile, worldState, onClose, onSelectNPC }: any) => {
+  const location = worldState.map.locations?.find((l:any) => l.id === tile.location_id);
+  const faction = worldState.factions?.find((f:any) => f.id === tile.owner_faction_id);
+  const npcsHere = (worldState.npcs || []).filter((n:any) => n.location_id === location?.id);
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-40 p-4" onClick={onClose}>
-      <div className="bg-gray-800 border border-blue-500 rounded-lg p-6 max-w-sm w-full shadow-2xl relative" onClick={e => e.stopPropagation()}>
-        <button onClick={onClose} className="absolute top-2 right-3 text-gray-400 hover:text-white">✕</button>
-        
-        <h3 className="text-xl font-bold text-white mb-1">
-          {location ? location.name : 'Wilderness'}
-        </h3>
-        <p className="text-xs text-blue-400 uppercase tracking-wider mb-4">
-          ({tile.x}, {tile.y}) • {tile.terrain} {faction ? `• ${faction.name} Territory` : ''}
-        </p>
-
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-40 p-4 animate-in fade-in zoom-in duration-200" onClick={onClose}>
+      <div className="bg-realm-panel border border-realm-accent/50 rounded-2xl p-6 max-w-sm w-full shadow-[0_0_50px_rgba(0,0,0,0.8)] relative" onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute top-4 right-4 text-gray-500 hover:text-white transition-colors">✕</button>
+        <div className="mb-6">
+          <h3 className="text-2xl font-bold text-white mb-1">{location ? location.name : 'Wilderness'}</h3>
+          <p className="text-xs text-realm-accent uppercase tracking-widest font-mono">COORD: {tile.x}, {tile.y} • {tile.terrain} {faction ? `• ${faction.name}` : ''}</p>
+        </div>
         {location ? (
-          <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="bg-black/30 p-2 rounded">
-                <div className="text-xs text-gray-500">Pop</div>
-                <div className="text-white font-mono">{location.population}</div>
+          <div className="space-y-6">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-black/40 p-2 rounded-lg border border-gray-700/50 text-center">
+                <div className="text-[9px] text-gray-500 uppercase font-bold mb-1">Pop</div>
+                <div className={`text-sm font-mono font-bold text-white`}>{location.population}</div>
               </div>
-              <div className="bg-black/30 p-2 rounded">
-                <div className="text-xs text-gray-500">Defense</div>
-                <div className="text-white font-mono">{location.defense}</div>
+              <div className="bg-black/40 p-2 rounded-lg border border-gray-700/50 text-center">
+                <div className="text-[9px] text-gray-500 uppercase font-bold mb-1">Def</div>
+                <div className={`text-sm font-mono font-bold text-white`}>{location.defense}</div>
               </div>
-              <div className="bg-black/30 p-2 rounded">
-                <div className="text-xs text-gray-500">Unrest</div>
-                <div className="text-red-400 font-mono">{location.unrest}%</div>
+              <div className="bg-black/40 p-2 rounded-lg border border-gray-700/50 text-center">
+                <div className="text-[9px] text-gray-500 uppercase font-bold mb-1">Risk</div>
+                <div className={`text-sm font-mono font-bold text-realm-danger`}>{location.unrest}%</div>
               </div>
             </div>
-
             <div>
-              <h4 className="text-xs font-bold text-gray-400 uppercase mb-2">Inhabitants</h4>
-              <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                {npcsHere.length === 0 && <span className="text-xs text-gray-600 italic">No major NPCs present.</span>}
-                {npcsHere.map(npc => (
-                  <div 
-                    key={npc.id} 
-                    onClick={() => onSelectNPC(npc)}
-                    className="flex items-center justify-between bg-gray-700/50 p-2 rounded cursor-pointer hover:bg-blue-900/30 border border-transparent hover:border-blue-500 transition-colors"
-                  >
+              <h4 className="text-[10px] font-bold text-gray-500 uppercase mb-3 tracking-widest border-l-2 border-realm-accent pl-2">Inhabitants</h4>
+              <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
+                {npcsHere.length === 0 && <span className="text-xs text-gray-600 italic">Unpopulated territory...</span>}
+                {npcsHere.map((npc: any) => (
+                  <div key={npc.id} onClick={() => onSelectNPC(npc)} className="flex items-center justify-between bg-white/5 p-3 rounded-xl cursor-pointer hover:bg-realm-accent/20 border border-transparent hover:border-realm-accent/50 transition-all group">
                      <div>
-                       <div className="text-sm font-bold text-blue-200">{npc.name}</div>
-                       <div className="text-[10px] text-gray-400">{npc.role}</div>
+                       <div className="text-sm font-bold text-blue-200 group-hover:text-white">{npc.name}</div>
+                       <div className="text-[10px] text-gray-500 uppercase tracking-tighter">{npc.role}</div>
                      </div>
-                     <span className="text-lg">💬</span>
+                     <span className="text-lg opacity-40 group-hover:opacity-100 transition-opacity">💬</span>
                   </div>
                 ))}
               </div>
             </div>
           </div>
-        ) : (
-          <p className="text-gray-400 text-sm italic">Nothing but wild {tile.terrain} here.</p>
-        )}
+        ) : <p className="text-gray-500 text-sm italic py-8 text-center border border-dashed border-gray-700 rounded-xl">Nothing but wild {tile.terrain} here.</p>}
       </div>
     </div>
   );
 };
 
-export const NPCChatModal = ({ 
-  npc, 
-  worldState, 
-  theme,
-  onClose, 
-  onUpdateNPC 
-}: { 
-  npc: NPC, 
-  worldState: WorldState, 
-  theme?: ThemeConfig,
-  onClose: () => void,
-  onUpdateNPC: (npc: NPC) => void
-}) => {
+export const NPCChatModal = ({ npc, worldState, theme, onClose, onUpdateNPC }: any) => {
   const [history, setHistory] = useState<{role: string, text: string}[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [speaking, setSpeaking] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [generatingImg, setGeneratingImg] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const faction = worldState.factions?.find(f => f.id === npc.faction_id);
+  const faction = worldState.factions?.find((f:any) => f.id === npc.faction_id);
 
   useEffect(() => {
-    if (!npc.portraitUrl && !generatingImg) {
-      setGeneratingImg(true);
+    if (!npc.portraitUrl) {
       generateCharacterPortrait(npc, faction?.name || 'Unknown', theme).then(url => {
-        if (url) {
-          onUpdateNPC({ ...npc, portraitUrl: url });
-        }
-        setGeneratingImg(false);
+        if (url) onUpdateNPC({ ...npc, portraitUrl: url });
       });
     }
-  }, [npc.id]);
+  }, []);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    if (scrollRef.current) scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [history]);
 
   const handleSpeak = async (text: string) => {
     setSpeaking(true);
-    // Determine voice based on simplistic heuristic from hash of ID
     const voices = ['Kore', 'Puck', 'Fenrir', 'Charon'];
-    const voiceIndex = npc.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) % voices.length;
-    const voice = voices[voiceIndex];
-
+    const voice = voices[Math.floor(Math.random()*voices.length)];
     const base64Audio = await generateSpeech(text, voice);
-    
     if (base64Audio) {
       try {
-        if (!audioContextRef.current) {
-          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({sampleRate: 24000});
-        }
+        if (!audioContextRef.current) audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({sampleRate: 24000});
         const ctx = audioContextRef.current;
-        if (ctx.state === 'suspended') await ctx.resume();
-
         const bytes = decode(base64Audio);
         const buffer = decodePCM(bytes, ctx, 24000, 1);
-        
         const source = ctx.createBufferSource();
         source.buffer = buffer;
         source.connect(ctx.destination);
         source.onended = () => setSpeaking(false);
         source.start(0);
-      } catch (e) {
-        console.error("Audio playback error", e);
-        setSpeaking(false);
-      }
-    } else {
-      setSpeaking(false);
-    }
+      } catch (e) { setSpeaking(false); }
+    } else { setSpeaking(false); }
   };
 
   const handleSend = async () => {
     if (!input.trim() || loading) return;
-    const userMsg = input;
-    setInput('');
-    setLoading(true);
+    const userMsg = input; setInput(''); setLoading(true);
     setHistory(prev => [...prev, { role: 'user', text: userMsg }]);
-
     try {
       const response = await interactWithNPC(npc, faction?.name || 'Unknown', history, userMsg);
       setHistory(prev => [...prev, { role: 'model', text: response }]);
-      
-      // Implicitly influence memory
-      const newNPC = addMemoryToNPC(npc, `Chatted with traveler: "${userMsg}"`, worldState.time.epoch, ['chat', 'player_interaction']);
-      onUpdateNPC(newNPC);
-
-      // Trigger TTS
+      onUpdateNPC(addMemoryToNPC(npc, `Traveler said: ${userMsg}`, worldState.time.epoch));
       handleSpeak(response);
-    } catch (e) {
-      console.error(e);
-      setHistory(prev => [...prev, { role: 'model', text: "(The NPC seems distracted and doesn't respond.)" }]);
-    }
+    } catch (e) { setHistory(prev => [...prev, { role: 'model', text: "(Silent...)" }]); }
     setLoading(false);
   };
 
-  const startListening = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("Browser does not support Speech Recognition.");
-      return;
-    }
-    
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'en-US';
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-
-    recognition.onstart = () => setIsListening(true);
-    recognition.onend = () => setIsListening(false);
-    
-    recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      setInput(transcript);
-    };
-
-    recognition.start();
-  };
-
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-      <div className="bg-gray-900 border border-gray-600 rounded-xl w-full max-w-4xl h-[600px] flex overflow-hidden shadow-2xl">
-        
-        {/* Left: Portrait & Stats */}
-        <div className="w-1/3 bg-gray-800 p-6 flex flex-col border-r border-gray-700 relative">
-           <div className="aspect-square bg-gray-900 rounded-lg mb-4 overflow-hidden border border-gray-700 relative shadow-inner">
-             {npc.portraitUrl ? (
-               <img src={npc.portraitUrl} alt={npc.name} className="w-full h-full object-cover" />
-             ) : (
-               <div className="w-full h-full flex flex-col items-center justify-center text-gray-500 animate-pulse">
-                 <span className="text-4xl mb-2">🎨</span>
-                 <span className="text-xs">Painting Portrait...</span>
-               </div>
-             )}
-             <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent p-2">
-                <div className="flex justify-between items-end">
-                  <div>
-                    <h2 className="text-xl font-bold text-white shadow-black drop-shadow-md">{npc.name}</h2>
-                    <div className="text-xs text-blue-300 font-mono">{npc.role}</div>
-                  </div>
-                  {speaking && <span className="text-2xl animate-pulse">🔊</span>}
-                </div>
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4 backdrop-blur-md animate-in fade-in duration-300">
+      <div className="bg-realm-panel border border-gray-700 rounded-3xl w-full max-w-5xl h-[700px] flex overflow-hidden shadow-[0_0_100px_rgba(0,0,0,1)]">
+        <div className="w-80 bg-black/40 p-8 flex flex-col border-r border-gray-800 relative">
+           <div className="aspect-square bg-gray-900 rounded-2xl mb-6 overflow-hidden border border-gray-700 relative group">
+             {npc.portraitUrl ? <img src={npc.portraitUrl} className="w-full h-full object-cover" /> : <div className="w-full h-full animate-pulse bg-gray-800" />}
+             <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black to-transparent p-4 flex justify-between items-center">
+               <div><h2 className="text-xl font-bold text-white">{npc.name}</h2><div className="text-[10px] text-realm-accent font-mono uppercase">{npc.role}</div></div>
+               {speaking && <div className="flex gap-1 h-3 animate-pulse"><div className="w-1 bg-realm-accent h-full" /><div className="w-1 bg-realm-accent h-full" /></div>}
              </div>
            </div>
-
-           <div className="space-y-4 flex-1 overflow-y-auto">
-             <div>
-               <h4 className="text-xs font-bold text-gray-500 uppercase mb-1">Faction</h4>
-               <div className="text-sm text-gray-300">{faction?.name}</div>
-             </div>
-             <div>
-               <h4 className="text-xs font-bold text-gray-500 uppercase mb-1">Goals</h4>
-               <ul className="text-xs text-gray-400 list-disc list-inside">
-                 {(npc.goals || []).map((g, i) => <li key={i}>{g.text}</li>)}
-               </ul>
-             </div>
-             <div>
-               <h4 className="text-xs font-bold text-gray-500 uppercase mb-1">Recent Memories</h4>
-               <ul className="text-xs text-gray-400 space-y-1">
-                 {(npc.memory || []).slice(0, 3).map(m => (
-                   <li key={m.id} className="bg-black/20 p-1 rounded italic">"{m.text}"</li>
-                 ))}
-               </ul>
-             </div>
+           <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-4">
+             <div className="p-3 bg-white/5 rounded-xl"><h4 className="text-[9px] font-bold text-gray-500 uppercase mb-2">Allegiance</h4><div className="text-sm text-blue-100">{faction?.name}</div></div>
+             <div className="p-3 bg-white/5 rounded-xl"><h4 className="text-[9px] font-bold text-gray-500 uppercase mb-2">Goals</h4><ul className="text-xs text-gray-400">{(npc.goals || []).map((g:any, i:number) => <li key={i}>• {g.text}</li>)}</ul></div>
            </div>
         </div>
-
-        {/* Right: Chat */}
-        <div className="w-2/3 flex flex-col bg-[#0f111a]">
-          <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-900/50">
-            <span className="text-xs text-gray-500 uppercase tracking-widest">Conversation</span>
-            <button onClick={onClose} className="text-gray-400 hover:text-white">✕</button>
+        <div className="flex-1 flex flex-col bg-[#0b0c14]">
+          <div className="p-6 border-b border-gray-800 flex justify-between items-center bg-black/20">
+            <span className="text-[10px] text-realm-muted uppercase tracking-[0.3em] font-bold">Neural Link: {npc.name}</span>
+            <button onClick={onClose} className="text-gray-500 hover:text-white">✕</button>
           </div>
-          
-          <div className="flex-1 overflow-y-auto p-6 space-y-4" ref={scrollRef}>
-             {history.length === 0 && (
-               <div className="text-center text-gray-600 mt-10 italic text-sm">
-                 Start a conversation with {npc.name}. Your words may influence them.
-               </div>
-             )}
+          <div className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar" ref={scrollRef}>
              {history.map((msg, i) => (
                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                 <div className={`max-w-[80%] p-3 rounded-lg text-sm leading-relaxed ${
-                   msg.role === 'user' 
-                   ? 'bg-blue-900/40 text-blue-100 border border-blue-800 rounded-tr-none' 
-                   : 'bg-gray-800 text-gray-200 border border-gray-700 rounded-tl-none'
-                 }`}>
-                   {msg.text}
-                 </div>
+                 <div className={`max-w-[75%] p-4 rounded-2xl text-sm ${msg.role === 'user' ? 'bg-realm-accent/20 text-blue-100 rounded-tr-none' : 'bg-white/5 text-gray-200 rounded-tl-none border border-white/10'}`}>{msg.text}</div>
                </div>
              ))}
-             {loading && (
-               <div className="flex justify-start">
-                 <div className="bg-gray-800 p-3 rounded-lg rounded-tl-none text-gray-500 text-xs animate-pulse">
-                   Thinking...
-                 </div>
-               </div>
-             )}
           </div>
-
-          <div className="p-4 bg-gray-800 border-t border-gray-700">
-            <div className="flex gap-2">
-              <button 
-                onClick={startListening}
-                className={`px-3 rounded border ${isListening ? 'bg-red-600 border-red-500 text-white animate-pulse' : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600'}`}
-                title="Speak to NPC"
-              >
-                🎤
-              </button>
-              <input 
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSend()}
-                placeholder={`Say something to ${npc.name}...`}
-                className="flex-1 bg-gray-900 border border-gray-600 text-white rounded px-4 py-2 focus:border-blue-500 focus:outline-none"
-              />
-              <Button onClick={handleSend} disabled={loading} variant="primary">Send</Button>
-            </div>
+          <div className="p-6 bg-black/40 border-t border-gray-800 flex gap-3">
+            <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSend()} placeholder={`Query ${npc.name}...`} className="flex-1 bg-gray-900 border border-gray-700 text-white rounded-xl px-6 py-2" />
+            <Button onClick={handleSend} disabled={loading}>Send</Button>
           </div>
         </div>
-
       </div>
     </div>
   );
 };
 
-export const TraceModal = ({ trace, onClose }: { trace: DecisionTrace, onClose: () => void }) => {
+export const TraceModal = ({ trace, onClose }: any) => {
   if (!trace) return null;
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg border border-blue-500 p-6 relative">
-        <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-white">✕</button>
-        <h2 className="text-xl font-bold text-white mb-1">Decision Trace</h2>
-        <p className="text-xs text-blue-400 mb-4 font-mono">{trace.decision_trace_id}</p>
-        
-        <div className="space-y-4 font-mono text-sm">
-          <div>
-            <h4 className="text-blue-400 text-xs uppercase mb-1">Agent Goal</h4>
-            <div className="bg-black/30 p-2 rounded text-gray-300">
-              {trace.actor} wants to: {trace.goal_summary.join(', ')}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-             <div>
-               <h4 className="text-purple-400 text-xs uppercase mb-1">Memories Used</h4>
-               <ul className="list-disc list-inside text-xs text-gray-400 bg-black/30 p-2 rounded">
-                 {(trace.retrieved_memories || []).map((m, i) => <li key={i}>{m.text}</li>)}
-               </ul>
-             </div>
-             <div>
-               <h4 className="text-purple-400 text-xs uppercase mb-1">Facts Used</h4>
-               <ul className="list-disc list-inside text-xs text-gray-400 bg-black/30 p-2 rounded">
-                 {(trace.world_facts_used || []).map((f, i) => <li key={i}>{f}</li>)}
-               </ul>
-             </div>
-          </div>
-
-          <div>
-             <h4 className="text-yellow-400 text-xs uppercase mb-1">Reasoning & Choice</h4>
-             <div className="bg-black/30 p-2 rounded border-l-2 border-yellow-500 text-white">
-                Selected: <span className="font-bold">{trace.chosen_plan}</span>
-             </div>
-          </div>
-
-          <div>
-             <h4 className="text-green-400 text-xs uppercase mb-1">Sub-Agent / Tool Calls</h4>
-             {(trace.tool_calls || []).map((tc, i) => (
-               <div key={i} className="bg-black/50 p-2 rounded mb-1 border border-green-900">
-                 <div className="text-green-300 font-bold">{tc.tool}</div>
-                 <div className="text-xs text-gray-500 overflow-x-auto">{JSON.stringify(tc.inputs)}</div>
-               </div>
-             ))}
-          </div>
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200 backdrop-blur-sm">
+      <div className="bg-realm-panel w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl border border-realm-accent/40 p-8 relative">
+        <button onClick={onClose} className="absolute top-6 right-6 text-gray-500 hover:text-white">✕</button>
+        <h2 className="text-2xl font-bold text-white mb-6">Cognitive Trace // {trace.actor}</h2>
+        <div className="space-y-6 font-mono text-xs text-gray-400">
+          <section className="bg-black/40 p-4 rounded-xl border border-white/5"><h4 className="text-realm-accent text-[9px] uppercase mb-2">Memory retrieval</h4><ul>{(trace.retrieved_memories || []).map((m:any, i:number) => <li key={i}>› {m.text}</li>)}</ul></section>
+          <section className="bg-realm-accent/5 p-4 rounded-xl border border-realm-accent/20"><h4 className="text-realm-accent text-[9px] uppercase mb-2">Computed Plan</h4><div className="text-sm text-white font-bold">{trace.chosen_plan}</div></section>
         </div>
       </div>
     </div>
   );
 };
 
-export const GenesisLoading = () => {
+export const GenesisLoading = ({ messages }: { messages?: string[] }) => {
   const [currentStep, setCurrentStep] = useState(0);
-  
-  const steps = [
-    "Compiling Laws of Physics...",
-    "Forging Tectonic Plates...",
-    "Seeding Ancient Forests...",
-    "Establishing Trade Routes...",
-    "Birthing Faction Leaders...",
-    "Simulating Pre-History...",
-    "Finalizing Reality..."
-  ];
+  const baseSteps = ["Primordial Compilation...", "Tectonic Synchronization...", "Eco-System Seeding...", "Agent Neuron Activation..."];
+  const steps = messages && messages.length > 0 ? [...messages, "Reality Solidification..."] : [...baseSteps, "Reality Solidification..."];
 
   useEffect(() => {
-    // Cycle through steps every 1.2s to keep it moving
-    const interval = setInterval(() => {
-      setCurrentStep((prev) => (prev + 1) % steps.length);
-    }, 1200);
+    const interval = setInterval(() => setCurrentStep((prev) => (prev + 1) % steps.length), 1500);
     return () => clearInterval(interval);
-  }, []);
+  }, [steps.length]);
 
   return (
-    <div className="fixed inset-0 bg-[#0f111a] flex flex-col items-center justify-center z-[100]">
-      {/* Background Ambience */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-blue-900/20 via-[#0f111a] to-[#0f111a]"></div>
-      
-      {/* Central Orb Animation */}
-      <div className="relative mb-12">
-         {/* Outer Ring */}
-         <div className="w-32 h-32 rounded-full border-t-2 border-b-2 border-blue-500 animate-[spin_3s_linear_infinite] shadow-[0_0_30px_rgba(59,130,246,0.5)]"></div>
-         {/* Inner Ring */}
-         <div className="absolute inset-4 rounded-full border-r-2 border-l-2 border-purple-500 animate-[spin_2s_linear_infinite_reverse]"></div>
-         {/* Core */}
-         <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-16 h-16 bg-blue-500 rounded-full blur-xl animate-pulse opacity-50"></div>
-            <span className="relative text-4xl animate-bounce">✨</span>
+    <div className="fixed inset-0 bg-realm-dark flex flex-col items-center justify-center z-[100] animate-in fade-in duration-1000">
+      <div className="relative mb-16">
+         <div className="w-48 h-48 rounded-full border border-realm-accent/20 animate-[spin_10s_linear_infinite]"></div>
+         <div className="absolute inset-0 flex items-center justify-center flex-col">
+            <span className="text-4xl font-black italic tracking-tighter">AutoWorld</span>
+            <span className="text-xs text-realm-accent tracking-[0.5em] uppercase">Empire</span>
          </div>
       </div>
-
-      {/* Text Container */}
-      <div className="text-center space-y-4 relative z-10 max-w-md px-6">
-        <h2 className="text-3xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-blue-400 bg-clip-text text-transparent animate-pulse">
-          Fabricating World
-        </h2>
-        
-        <div className="h-8 overflow-hidden">
-           <p className="text-blue-200/80 font-mono text-sm transition-all duration-300 transform">
-             {`> ${steps[currentStep]}`}
-           </p>
-        </div>
-
-        {/* Fake Progress Bar */}
-        <div className="w-full h-1 bg-gray-800 rounded-full overflow-hidden mt-8 max-w-xs mx-auto">
-           <div className="h-full bg-gradient-to-r from-blue-600 to-purple-600 animate-[loading_10s_ease-in-out_infinite] w-full origin-left"></div>
-        </div>
+      <div className="text-center space-y-6 w-full max-w-sm px-6">
+        <h2 className="text-sm font-mono tracking-[0.5em] text-realm-muted uppercase animate-pulse">Initializing Multiverse</h2>
+        <p className="text-realm-accent font-mono text-xs">{`> ${steps[currentStep]}`}</p>
+        <div className="w-full h-px bg-gray-800 overflow-hidden relative"><div className="absolute inset-0 bg-realm-accent animate-[loading_10.5s_linear_forwards] origin-left" /></div>
       </div>
-      
-      <style>{`
-        @keyframes loading {
-          0% { transform: scaleX(0); }
-          50% { transform: scaleX(0.7); }
-          100% { transform: scaleX(1); }
-        }
-      `}</style>
+      <style>{`@keyframes loading { 0% { transform: scaleX(0); } 100% { transform: scaleX(1); } }`}</style>
     </div>
   );
 };
 
 const SetupInput = ({ label, value, onChange, suggestions, placeholder }: any) => (
-  <div>
-    <label className="block text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">{label}</label>
+  <div className="space-y-3">
+    <label className="block text-[10px] font-bold text-realm-accent uppercase tracking-[0.3em]">{label}</label>
     <input 
       type="text" 
       value={value} 
       onChange={(e) => onChange(e.target.value)} 
       placeholder={placeholder}
-      className="w-full bg-gray-900 border border-gray-700 text-white p-3 rounded focus:border-blue-500 focus:outline-none transition-colors shadow-inner"
+      className="w-full bg-black/40 border border-gray-700 text-white px-5 py-3 rounded-xl focus:border-realm-accent focus:ring-1 focus:ring-realm-accent/20 focus:outline-none transition-all placeholder:text-gray-600 shadow-inner"
     />
-    <div className="flex flex-wrap gap-2 mt-2">
+    <div className="flex flex-wrap gap-2">
       {suggestions.map((s: string) => (
         <button 
           key={s} 
           onClick={() => onChange(s)} 
-          className="text-[10px] bg-gray-800 hover:bg-gray-700 text-gray-300 px-2 py-1 rounded border border-gray-600 transition-colors"
+          className="text-[9px] bg-white/5 hover:bg-realm-accent/20 text-gray-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/5 hover:border-realm-accent/30 transition-all font-bold uppercase tracking-widest"
         >
           {s}
         </button>
@@ -557,64 +342,59 @@ const SetupInput = ({ label, value, onChange, suggestions, placeholder }: any) =
   </div>
 );
 
-export const SetupModal = ({ onConfirm, onCancel }: { onConfirm: (config: ThemeConfig) => void, onCancel: () => void }) => {
+export const SetupModal = ({ onConfirm, onCancel }: any) => {
   const [genre, setGenre] = useState('');
   const [threat, setThreat] = useState('');
   const [tone, setTone] = useState('');
-
-  const isComplete = genre.trim() && threat.trim() && tone.trim();
-
+  
   return (
-    <div className="fixed inset-0 bg-black/95 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-      <div className="bg-gray-800 border border-blue-500 rounded-xl p-8 max-w-lg w-full shadow-2xl shadow-blue-900/20 relative overflow-hidden">
-        {/* Decorative Background Element */}
-        <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none" />
+    <div className="fixed inset-0 bg-black/95 flex items-center justify-center z-50 p-4 backdrop-blur-xl animate-in fade-in duration-500">
+      <div className="bg-realm-panel border border-realm-accent/30 rounded-3xl p-10 max-w-2xl w-full shadow-[0_0_100px_rgba(122,162,247,0.1)] relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-realm-accent/50 to-transparent"></div>
 
-        <h2 className="text-3xl font-bold text-white mb-2 relative z-10">Forge Your World</h2>
-        <p className="text-gray-400 text-sm mb-8 relative z-10">
-          Define the seed parameters for the Genesis Agent. Be as creative or specific as you like—the AI will adapt.
+        <h2 className="text-4xl font-bold text-white mb-3 tracking-tighter">Forge a Reality</h2>
+        <p className="text-realm-muted text-sm mb-10 leading-relaxed max-w-md">
+          Parameters defined here will seed the Genesis Agent. Your world will be constructed with specific logic and narrative weight.
         </p>
         
-        <div className="space-y-6 mb-8 relative z-10">
+        <div className="space-y-8 mb-12">
           <SetupInput 
             label="Genre / Setting" 
             value={genre} 
             onChange={setGenre} 
-            placeholder="e.g. Underwater Steampunk, Cyberpunk Noir, High Fantasy..."
-            suggestions={['High Fantasy', 'Cyberpunk', 'Space Opera', 'Post-Apocalyptic', 'Eldritch Horror', 'Wild West']}
+            placeholder="e.g. Steampunk Moon Colony..."
+            suggestions={['High Fantasy', 'Cyberpunk', 'Post-Apocalyptic', 'Eldritch Horror']}
           />
-          
           <SetupInput 
-            label="Major Threat / Conflict" 
+            label="Major Threat" 
             value={threat} 
             onChange={setThreat} 
-            placeholder="e.g. The encroaching void, Rogue AI God, Dragonlords..."
-            suggestions={['Bandit Warlords', 'Undead Scourge', 'Rogue AI', 'Resource Scarcity', 'Ancient Curse']}
+            placeholder="e.g. Ancient Necromancer..."
+            suggestions={['Resource War', 'Undead Scourge', 'Rogue AI', 'Cosmic Horror']}
           />
-
           <SetupInput 
-            label="Tone / Atmosphere" 
+            label="World Tone" 
             value={tone} 
             onChange={setTone} 
-            placeholder="e.g. Grim & Gritty, Whimsical, Mysterious, Hopeful..."
-            suggestions={['Adventure', 'Grimdark', 'Hopeful', 'Mystery', 'Political Intrigue']}
+            placeholder="e.g. Hopeful & Vibrant..."
+            suggestions={['Grimdark', 'Adventurous', 'Mysterious', 'Whimsical']}
           />
         </div>
 
-        <div className="flex justify-between items-center relative z-10 pt-4 border-t border-gray-700">
-            <button onClick={onCancel} className="text-gray-400 hover:text-white text-sm transition-colors">Cancel</button>
+        <div className="flex justify-between items-center pt-8 border-t border-gray-800">
+            <button onClick={onCancel} className="text-realm-muted hover:text-white transition-colors text-sm uppercase tracking-widest font-bold">Discard</button>
             <Button 
               onClick={() => onConfirm({ 
                 genre: genre || 'High Fantasy', 
-                threat: threat || 'Unknown Dangers', 
-                tone: tone || 'Adventure' 
+                threat: threat || 'Bandits', 
+                tone: tone || 'Adventurous' 
               })} 
-              variant="primary"
+              className="px-10 py-4 text-lg"
             >
-              {isComplete ? 'Initialize Genesis' : 'Use Defaults & Generate'}
+              Forge Empire
             </Button>
         </div>
       </div>
     </div>
-  )
+  );
 };
